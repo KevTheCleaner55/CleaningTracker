@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dorm Cleaning Tracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script type="module">
+        // Firebase Imports
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { 
+            getAuth, 
+            signInAnonymously, 
+            signInWithCustomToken, 
+            onAuthStateChanged,
+            setPersistence,
+            inMemoryPersistence
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { 
+            getFirestore, 
+            doc, 
+            setDoc, 
+            addDoc,
+            collection, 
+            onSnapshot, 
+            query,
+            Timestamp,
+            serverTimestamp,
+            setLogLevel
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- Global Variables & Firebase Configuration ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'dorm-cleaning-tracker-dev';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
+            apiKey: "YOUR_API_KEY", // Replace with your actual config if testing locally
+            authDomain: "YOUR_AUTH_DOMAIN",
+            projectId: "YOUR_PROJECT_ID",
+            storageBucket: "YOUR_STORAGE_BUCKET",
+            messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+            appId: "YOUR_APP_ID"
+        };
+
+        let app;
+        let auth;
+        let db;
+        let currentUserId = null;
+        let isAuthReady = false;
+
+        // --- UI Elements ---
+        const dormSelect = document.getElementById('dormSelect');
+        const roomNumberInput = document.getElementById('roomNumber');
+        const cleanedByInput = document.getElementById('cleanedBy');
+        const cleanedDateInput = document.getElementById('cleanedDate');
+        const missedItemsInput = document.getElementById('missedItems');
+        const maintenanceIssuesInput = document.getElementById('maintenanceIssues');
+        const addRoomForm = document.getElementById('addRoomForm');
+        const cleanedRoomsList = document.getElementById('cleanedRoomsList');
+        const loadingIndicator = document.getElementById('loadingIndicator');
+        const noRoomsMessage = document.getElementById('noRoomsMessage');
+        const userIdDisplay = document.getElementById('userIdDisplay');
+        const messageModal = document.getElementById('messageModal');
+        const messageText = document.getElementById('messageText');
+        const closeMessageButton = document.getElementById('closeMessageButton');
+
+        // --- Dorm Configuration ---
+        // Updated to include Delta
+        const dorms = ["Sigma", "Alpha", "Beta", "Gamma", "Kappa", "Delta"]; 
+
+        // --- Helper Functions ---
+        function showMessage(message, isError = false) {
+            messageText.textContent = message;
+            messageModal.classList.remove('hidden');
+            if (isError) {
+                messageText.classList.add('text-red-700');
+                messageText.classList.remove('text-green-700');
+            } else {
+                messageText.classList.add('text-green-700');
+                messageText.classList.remove('text-red-700');
+            }
+        }
+
+        function hideMessage() {
+            messageModal.classList.add('hidden');
+        }
+        
+        // --- Firebase Initialization and Authentication ---
+        async function initializeFirebase() {
+            try {
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                setLogLevel('debug'); // Enable Firestore logging for debugging
+
+                await setPersistence(auth, inMemoryPersistence); // Use in-memory persistence
+
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        currentUserId = user.uid;
+                        console.log("User is signed in with UID:", currentUserId);
+                        userIdDisplay.textContent = `User ID: ${currentUserId}`;
+                        isAuthReady = true;
+                        loadCleanedRooms(); // Load rooms once auth is ready
+                    } else {
+                        console.log("User is signed out. Attempting to sign in.");
+                        currentUserId = null;
+                        userIdDisplay.textContent = "User ID: Not authenticated";
+                        // Attempt sign-in if not authenticated
+                        try {
+                            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                                console.log("Attempting sign in with custom token.");
+                                await signInWithCustomToken(auth, __initial_auth_token);
+                            } else {
+                                console.log("Attempting to sign in anonymously.");
+                                await signInAnonymously(auth);
+                            }
+                        } catch (error) {
+                            console.error("Error during sign-in:", error);
+                            showMessage(`Error during sign-in: ${error.message}`, true);
+                            isAuthReady = true; // Still set to true to allow app to proceed, but with limited functionality
+                            loadCleanedRooms(); // Attempt to load rooms even if auth fails, might be public data
+                        }
+                    }
+                });
+
+            } catch (error) {
+                console.error("Firebase initialization error:", error);
+                showMessage(`Firebase initialization error: ${error.message}`, true);
+                loadingIndicator.classList.add('hidden');
+            }
+        }
+
+
+        // --- Firestore Data Operations ---
+        const roomsCollectionPath = `/artifacts/${appId}/public/data/dormRoomsCleaned`;
+
+        async function addCleanedRoom(event) {
+            event.preventDefault();
+            if (!isAuthReady || !currentUserId) {
+                showMessage("Authentication not ready. Please wait and try again.", true);
+                console.error("Add room failed: Auth not ready or no user ID.");
+                return;
+            }
+
+            const roomData = {
+                dorm: dormSelect.value,
+                roomNumber: roomNumberInput.value.trim(),
+                cleanedBy: cleanedByInput.value.trim(),
+                cleanedDate: cleanedDateInput.value,
+                missedItems: missedItemsInput.value.trim() || "N/A",
+                maintenanceIssues: maintenanceIssuesInput.value.trim() || "N/A",
+                submittedBy: currentUserId,
+                createdAt: serverTimestamp() // Firestore server timestamp
+            };
+
+            // Basic validation
+            if (!roomData.dorm || !roomData.roomNumber || !roomData.cleanedBy || !roomData.cleanedDate) {
+                showMessage("Please fill in all required fields: Dorm, Room #, Cleaned By, and Cleaned Date.", true);
+                return;
+            }
+
+            try {
+                const roomsRef = collection(db, roomsCollectionPath);
+                await addDoc(roomsRef, roomData);
+                showMessage("Room cleaning details added successfully!", false);
+                addRoomForm.reset(); // Reset form after submission
+                // Set default date to today for next entry
+                cleanedDateInput.valueAsDate = new Date();
+            } catch (error) {
+                console.error("Error adding document: ", error);
+                showMessage(`Error adding room: ${error.message}`, true);
+            }
+        }
+
+        function loadCleanedRooms() {
+            if (!isAuthReady) { 
+                console.log("Auth not ready, skipping room load.");
+                return;
+            }
+            
+            loadingIndicator.classList.remove('hidden');
+            noRoomsMessage.classList.add('hidden');
+            cleanedRoomsList.innerHTML = ''; 
+
+            const q = query(collection(db, roomsCollectionPath));
+
+            onSnapshot(q, (querySnapshot) => {
+                loadingIndicator.classList.add('hidden');
+                const roomsByDorm = {};
+                dorms.forEach(dorm => roomsByDorm[dorm] = []); // Initialize with all dorms in order
+
+                querySnapshot.forEach((doc) => {
+                    const room = { id: doc.id, ...doc.data() };
+                    if (room.dorm && roomsByDorm[room.dorm]) {
+                        roomsByDorm[room.dorm].push(room);
+                    } else if (room.dorm) {
+                        // This case handles if a dorm was added to Firestore but not yet to the `dorms` array in code
+                        // For this update, it's less likely, but good for robustness
+                        console.warn(`Room found for unknown dorm: ${room.dorm}. It will not be displayed in a sorted section.`);
+                    }
+                });
+                
+                for (const dorm in roomsByDorm) {
+                    roomsByDorm[dorm].sort((a, b) => {
+                        const dateA = a.cleanedDate ? new Date(a.cleanedDate) : (a.createdAt ? a.createdAt.toDate() : 0);
+                        const dateB = b.cleanedDate ? new Date(b.cleanedDate) : (b.createdAt ? b.createdAt.toDate() : 0);
+                        return dateB - dateA; 
+                    });
+                }
+
+                renderCleanedRooms(roomsByDorm);
+
+            }, (error) => {
+                console.error("Error fetching rooms: ", error);
+                showMessage(`Error fetching rooms: ${error.message}`, true);
+                loadingIndicator.classList.add('hidden');
+                noRoomsMessage.textContent = "Error loading rooms. Please try again later.";
+                noRoomsMessage.classList.remove('hidden');
+            });
+        }
+
+        function renderCleanedRooms(roomsByDorm) {
+            cleanedRoomsList.innerHTML = ''; 
+            let totalRoomsCount = 0;
+
+            dorms.forEach(dormName => { // Iterate in the defined order
+                const roomsInDorm = roomsByDorm[dormName] || []; // Ensure it exists
+                totalRoomsCount += roomsInDorm.length;
+
+                const dormSection = document.createElement('div');
+                dormSection.className = 'mb-6 p-4 bg-white shadow-md rounded-lg';
+
+                const dormHeader = document.createElement('h3');
+                dormHeader.className = 'text-xl font-semibold text-indigo-700 mb-3';
+                dormHeader.textContent = `${dormName} (${roomsInDorm.length} rooms)`;
+                dormSection.appendChild(dormHeader);
+
+                if (roomsInDorm.length > 0) {
+                    const ul = document.createElement('ul');
+                    ul.className = 'space-y-3';
+                    roomsInDorm.forEach(room => {
+                        const li = document.createElement('li');
+                        li.className = 'p-3 bg-gray-50 rounded-md border border-gray-200 text-sm';
+                        
+                        let cleanedDateDisplay = room.cleanedDate;
+                        // No need to convert room.createdAt for display here, as we are using room.cleanedDate
+                        
+                        li.innerHTML = `
+                            <strong class="text-gray-800">Room ${room.roomNumber}</strong>
+                            <p class="text-gray-600">Cleaned by: <span class="font-medium">${room.cleanedBy}</span> on <span class="font-medium">${cleanedDateDisplay}</span></p>
+                            <p class="text-gray-600">Missed: <span class="font-medium">${room.missedItems}</span></p>
+                            <p class="text-gray-600">Maintenance: <span class="font-medium">${room.maintenanceIssues}</span></p>
+                        `;
+                        ul.appendChild(li);
+                    });
+                    dormSection.appendChild(ul);
+                } else {
+                    const noRoomsInSection = document.createElement('p');
+                    noRoomsInSection.className = 'text-gray-500 italic';
+                    noRoomsInSection.textContent = 'No rooms cleaned in this dorm yet.';
+                    dormSection.appendChild(noRoomsInSection);
+                }
+                cleanedRoomsList.appendChild(dormSection);
+            });
+
+            if (totalRoomsCount === 0) {
+                noRoomsMessage.textContent = "No rooms have been logged as cleaned yet.";
+                noRoomsMessage.classList.remove('hidden');
+            } else {
+                noRoomsMessage.classList.add('hidden');
+            }
+        }
+
+        // --- Event Listeners and Initialization ---
+        window.onload = () => {
+            // Populate dorm select
+            // Ensure dormSelect exists before trying to append children
+            if (dormSelect) {
+                dorms.forEach(dorm => {
+                    const option = document.createElement('option');
+                    option.value = dorm;
+                    option.textContent = dorm;
+                    dormSelect.appendChild(option);
+                });
+            } else {
+                console.error("Dorm select element not found.");
+            }
+
+
+            // Set default date to today
+            if(cleanedDateInput) {
+                cleanedDateInput.valueAsDate = new Date();
+            }
+            
+            initializeFirebase();
+
+            if (addRoomForm) {
+                 addRoomForm.addEventListener('submit', addCleanedRoom);
+            } else {
+                console.error("Add room form not found");
+            }
+
+            if (closeMessageButton) {
+                closeMessageButton.addEventListener('click', hideMessage);
+            }
+        };
+
+    </script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f4f7f6; /* Light grayish-green */
+        }
+        .form-input {
+            @apply w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm;
+        }
+        .form-label {
+            @apply block text-sm font-medium text-gray-700 mb-1;
+        }
+        .btn-primary {
+            @apply w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500;
+        }
+        /* Custom scrollbar for better aesthetics */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800 p-4 md:p-8">
+
+    <div class="max-w-4xl mx-auto">
+        <header class="mb-8 text-center">
+            <h1 class="text-3xl md:text-4xl font-bold text-indigo-700">Dorm Room Cleaning Tracker</h1>
+            <p id="userIdDisplay" class="text-xs text-gray-500 mt-1">User ID: Loading...</p>
+        </header>
+
+        <div id="messageModal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center p-4">
+            <div class="relative bg-white p-6 rounded-lg shadow-xl max-w-sm w-full">
+                <p id="messageText" class="text-center text-lg mb-4"></p>
+                <button id="closeMessageButton" class="w-full bg-indigo-500 hover:bg-indigo-600 text-white font-semibold py-2 px-4 rounded-md transition duration-150 ease-in-out">
+                    OK
+                </button>
+            </div>
+        </div>
+
+        <section id="inputSection" class="mb-10 p-6 bg-white shadow-xl rounded-lg">
+            <h2 class="text-2xl font-semibold text-gray-800 mb-6">Log a Cleaned Room</h2>
+            <form id="addRoomForm" class="space-y-6">
+                <div>
+                    <label for="dormSelect" class="form-label">Dorm:</label>
+                    <select id="dormSelect" name="dorm" class="form-input">
+                        </select>
+                </div>
+                <div>
+                    <label for="roomNumber" class="form-label">Room Number:</label>
+                    <input type="text" id="roomNumber" name="roomNumber" class="form-input" placeholder="e.g., 101A" required>
+                </div>
+                <div>
+                    <label for="cleanedBy" class="form-label">Cleaned By:</label>
+                    <input type="text" id="cleanedBy" name="cleanedBy" class="form-input" placeholder="e.g., John Doe" required>
+                </div>
+                <div>
+                    <label for="cleanedDate" class="form-label">Date Cleaned:</label>
+                    <input type="date" id="cleanedDate" name="cleanedDate" class="form-input" required>
+                </div>
+                <div>
+                    <label for="missedItems" class="form-label">What was missed? (Optional):</label>
+                    <textarea id="missedItems" name="missedItems" rows="3" class="form-input" placeholder="e.g., Dust on top shelf, cobweb in corner"></textarea>
+                </div>
+                <div>
+                    <label for="maintenanceIssues" class="form-label">Maintenance Issues? (Optional):</label>
+                    <textarea id="maintenanceIssues" name="maintenanceIssues" rows="3" class="form-input" placeholder="e.g., Leaky faucet in bathroom, window doesn't lock"></textarea>
+                </div>
+                <div>
+                    <button type="submit" class="btn-primary">
+                        Add Cleaned Room
+                    </button>
+                </div>
+            </form>
+        </section>
+
+        <section id="displaySection">
+            <h2 class="text-2xl font-semibold text-gray-800 mb-6">Cleaned Rooms Status</h2>
+            <div id="loadingIndicator" class="text-center py-4 text-gray-600">
+                <svg class="animate-spin h-8 w-8 text-indigo-600 mx-auto mb-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                Loading cleaned rooms...
+            </div>
+            <div id="noRoomsMessage" class="hidden text-center py-4 text-gray-500 italic">
+                No rooms have been logged as cleaned yet.
+            </div>
+            <div id="cleanedRoomsList" class="space-y-4">
+                </div>
+        </section>
+
+        <footer class="mt-12 text-center text-sm text-gray-500">
+            <p>&copy; <span id="currentYear"></span> Dorm Cleaning Solutions. For demonstration purposes.</p>
+            <script>document.getElementById('currentYear').textContent = new Date().getFullYear();</script>
+        </footer>
+    </div>
+
+</body>
+</html>
