@@ -32,13 +32,14 @@
 
         // --- Global Variables & Firebase Configuration ---
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'dorm-cleaning-tracker-dev';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
-            apiKey: "KevTheCleaner55", // Replace with your actual config if testing locally
-            authDomain: "Detailcleaningtracker.firebaseapp.com",
-            projectId: "Detail cleaning tracker",
-            storageBucket: "YOUR_STORAGE_BUCKET",
-            messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-            appId: "YOUR_APP_ID"
+        const firebaseConfig = {
+              apiKey: "AIzaSyAIGucC_UixYy5bqJudMMg_L4D2yBHjhZ4",
+              authDomain: "cleaning-tracker-1c4de.firebaseapp.com",
+              projectId: "cleaning-tracker-1c4de",
+              storageBucket: "cleaning-tracker-1c4de.firebasestorage.app",
+              messagingSenderId: "581777685977",
+              appId: "1:581777685977:web:b99b4dd93138d76454adc8",
+              measurementId: "G-0KVPH724DP"
         };
 
         let app;
