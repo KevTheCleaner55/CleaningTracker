@@ -31,17 +31,19 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- Global Variables & Firebase Configuration ---
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'dorm-cleaning-tracker-dev';
+        const appId = 'dorm-cleaning-tracker-dev';
         const firebaseConfig = {
-              apiKey: "AIzaSyAIGucC_UixYy5bqJudMMg_L4D2yBHjhZ4",
-              authDomain: "cleaning-tracker-1c4de.firebaseapp.com",
-              projectId: "cleaning-tracker-1c4de",
-              storageBucket: "cleaning-tracker-1c4de.firebasestorage.app",
-              messagingSenderId: "581777685977",
-              appId: "1:581777685977:web:b99b4dd93138d76454adc8",
-              measurementId: "G-0KVPH724DP"
+            apiKey: "AIzaSyAIGucC_UixYy5bqJudMMg_L4D2yBHjhZ4",
+            authDomain: "cleaning-tracker-1c4de.firebaseapp.com",
+            projectId: "cleaning-tracker-1c4de",
+            storageBucket: "cleaning-tracker-1c4de.firebasestorage.app",
+            messagingSenderId: "581777685977",
+            appId: "1:581777685977:web:b99b4dd93138d76454adc8",
+            measurementId: "G-0KVPH724DP"
         };
-
+        firebase.initializeApp(FirebaseConfig)
+        
+        const auth = firebase.auth();
         let app;
         let auth;
         let db;
